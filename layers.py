@@ -60,8 +60,10 @@ def Downsample(dim, dim_out=None):
     # and then apply a convolutional layer with stride 1 to each channel
     return nn.Sequential(
         Rearrange("b c (h p1) (w p2) -> b (c p1 p2) h w", p1=2, p2=2),
-        nn.Conv2d(dim, default(dim_out, dim), 3, stride=2, padding=1),
+        nn.Conv2d(dim * 4, default(dim_out, dim), 1),
     )
+
+
 
 
 # Input - batch of noise levels, and converts to an embedding
@@ -70,7 +72,7 @@ def Downsample(dim, dim_out=None):
 # Idea is to decrease the siusoid frequency as we go deeper into position
 # this represents the higher values that the rotational encoding represents
 # https://kazemnejad.com/blog/transformer_architecture_positional_encoding/
-class SinusoidalPositionalEmbeddings(nn.Module):
+class SinusoidalPositionEmbeddings(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
@@ -82,6 +84,8 @@ class SinusoidalPositionalEmbeddings(nn.Module):
         embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
         embeddings = time[:, None] * embeddings[None, :]
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
+        return embeddings
+
 
 
 class WeightStandardizedConv2d(nn.Conv2d):
@@ -197,7 +201,6 @@ class Attention(nn.Module):
         out = rearrange(out, "b h (x y) d -> b (h d) x y", x=h, y=w)
         return self.to_out(out)
 
-
 class LinearAttention(nn.Module):
     def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
@@ -225,6 +228,7 @@ class LinearAttention(nn.Module):
         out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
         out = rearrange(out, "b h c (x y) -> b (h c) x y", h=self.heads, x=h, y=w)
         return self.to_out(out)
+
 
 
 

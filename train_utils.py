@@ -13,36 +13,12 @@ from torchvision.transforms import (
 import numpy as np
 from tqdm import tqdm
 
-
-def cosine_beta_schedule(timesteps, s=0.008):
-    """
-    cosine schedule as proposed in https://arxiv.org/abs/2102.09672
-    """
-    steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps)
-    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, 0.0001, 0.9999)
-
+timesteps = 300
 
 def linear_beta_schedule(timesteps):
     beta_start = 0.0001
     beta_end = 0.02
     return torch.linspace(beta_start, beta_end, timesteps)
-
-
-def quadratic_beta_schedule(timesteps):
-    beta_start = 0.0001
-    beta_end = 0.02
-    return torch.linspace(beta_start**0.5, beta_end**0.5, timesteps) ** 2
-
-
-def sigmoid_beta_schedule(timesteps):
-    beta_start = 0.0001
-    beta_end = 0.02
-    betas = torch.linspace(-6, 6, timesteps)
-    return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
 
 
 # define beta schedule
@@ -60,6 +36,32 @@ sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
 
 # calculations for posterior q(x_{t-1} | x_t, x_0)
 posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+
+def cosine_beta_schedule(timesteps, s=0.008):
+    """
+    cosine schedule as proposed in https://arxiv.org/abs/2102.09672
+    """
+    steps = timesteps + 1
+    x = torch.linspace(0, timesteps, steps)
+    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * torch.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0.0001, 0.9999)
+
+
+
+def quadratic_beta_schedule(timesteps):
+    beta_start = 0.0001
+    beta_end = 0.02
+    return torch.linspace(beta_start**0.5, beta_end**0.5, timesteps) ** 2
+
+
+def sigmoid_beta_schedule(timesteps):
+    beta_start = 0.0001
+    beta_end = 0.02
+    betas = torch.linspace(-6, 6, timesteps)
+    return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
+
 
 
 def extract(a, t, x_shape):
@@ -126,13 +128,8 @@ def p_sample_loop(model, shape):
         img = p_sample(
             model, img, torch.full((b,), i, device=device, dtype=torch.long), i
         )
-        imgs.append(img.cpu().numpy())
+        imgs.append(img.cpu())
     return imgs
-
-
-@torch.no_grad()
-def sample(model, image_size, batch_size=16, channels=3):
-    return p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
 
 
 from pathlib import Path
@@ -148,6 +145,7 @@ def num_to_groups(num, divisor):
 
 
 def q_sample(x_start, t, noise=None):
+
     if noise is None:
         noise = torch.randn_like(x_start)
 
@@ -160,7 +158,8 @@ def q_sample(x_start, t, noise=None):
 
 @torch.no_grad()
 def sample(model, image_size, batch_size=16, channels=3):
-    return p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
+    res = p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
+    return res[0]
 
 
 def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1"):

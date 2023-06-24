@@ -5,14 +5,14 @@ from datasets import load_dataset
 from pathlib import Path
 import torch
 from layers import num_to_groups
-from train_utils import p_losses, sample
-from unet import Unet
+from train_utils import *
+from unet import *
 
 # load dataset from the hub
 dataset = load_dataset("fashion_mnist")
 image_size = 28
 channels = 1
-batch_size = 128
+batch_size = 512
 
 
 # define image transformations (e.g. using torchvision)
@@ -35,9 +35,10 @@ transformed_dataset = dataset.with_transform(transforms).remove_columns("label")
 dataloader = DataLoader(transformed_dataset["train"], batch_size=batch_size, shuffle=True)
 
 
+
 results_folder = Path("./results")
 results_folder.mkdir(exist_ok = True)
-save_and_sample_every = 1000
+save_and_sample_every = 500
 
 from torch.optim import Adam
 
@@ -50,6 +51,8 @@ model = Unet(
 )
 model.to(device)
 
+print("using", device)
+
 optimizer = Adam(model.parameters(), lr=1e-3)
 
 from torchvision.utils import save_image
@@ -58,6 +61,7 @@ epochs = 6
 timesteps = 300
 
 for epoch in range(epochs):
+    print(f"Epoch {epoch}:")
     for step, batch in enumerate(dataloader):
       optimizer.zero_grad()
 
@@ -69,8 +73,8 @@ for epoch in range(epochs):
 
       loss = p_losses(model, batch, t, loss_type="huber")
 
-      if step % 100 == 0:
-        print("Loss:", loss.item())
+      if step % 20 == 0:
+        print(f"Loss for step {step}:", loss.item())
 
       loss.backward()
       optimizer.step()
@@ -79,8 +83,9 @@ for epoch in range(epochs):
       if step != 0 and step % save_and_sample_every == 0:
         milestone = step // save_and_sample_every
         batches = num_to_groups(4, batch_size)
-        all_images_list = list(map(lambda n: sample(model, batch_size=n, channels=channels), batches))
+        all_images_list = list(map(lambda n: sample(model, image_size=128, batch_size=n, channels=channels), batches))
         all_images = torch.cat(all_images_list, dim=0)
         all_images = (all_images + 1) * 0.5
         save_image(all_images, str(results_folder / f'sample-{milestone}.png'), nrow = 6)
+        print(f"Sampled for step {step}")
 
