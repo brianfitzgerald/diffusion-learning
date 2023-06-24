@@ -2,3 +2,4 @@ einops
 datasets
 tqdm
 torch
+torchvision
