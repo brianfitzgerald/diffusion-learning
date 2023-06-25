@@ -35,10 +35,9 @@ transformed_dataset = dataset.with_transform(transforms).remove_columns("label")
 dataloader = DataLoader(transformed_dataset["train"], batch_size=batch_size, shuffle=True)
 
 
-
 results_folder = Path("./results")
 results_folder.mkdir(exist_ok = True)
-save_and_sample_every = 500
+save_and_sample_every = 100
 
 from torch.optim import Adam
 
@@ -57,8 +56,8 @@ optimizer = Adam(model.parameters(), lr=1e-3)
 
 from torchvision.utils import save_image
 
-epochs = 6
-timesteps = 300
+epochs = 100
+timesteps = 100
 
 for epoch in range(epochs):
     print(f"Epoch {epoch}:")
@@ -86,6 +85,6 @@ for epoch in range(epochs):
         all_images_list = list(map(lambda n: sample(model, image_size=128, batch_size=n, channels=channels), batches))
         all_images = torch.cat(all_images_list, dim=0)
         all_images = (all_images + 1) * 0.5
-        save_image(all_images, str(results_folder / f'sample-{milestone}.png'), nrow = 6)
+        save_image(all_images, str(results_folder / f'sample-{epoch}-{milestone}.png'), nrow = 6)
         print(f"Sampled for step {step}")
 

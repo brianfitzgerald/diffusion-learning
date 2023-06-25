@@ -13,7 +13,7 @@ from torchvision.transforms import (
 import numpy as np
 from tqdm import tqdm
 
-timesteps = 300
+timesteps = 100
 
 def linear_beta_schedule(timesteps):
     beta_start = 0.0001
