@@ -9,33 +9,19 @@ from torchvision.transforms import (
     ToPILImage,
     CenterCrop,
     Resize,
+    RandomHorizontalFlip,
+    
 )
 import numpy as np
 from tqdm import tqdm
+from dataclasses import dataclass
 
-timesteps = 100
 
 def linear_beta_schedule(timesteps):
     beta_start = 0.0001
     beta_end = 0.02
     return torch.linspace(beta_start, beta_end, timesteps)
 
-
-# define beta schedule
-betas = linear_beta_schedule(timesteps=timesteps)
-
-# define alphas
-alphas = 1.0 - betas
-alphas_cumprod = torch.cumprod(alphas, axis=0)
-alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
-sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
-
-# calculations for diffusion q(x_t | x_{t-1}) and others
-sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
-sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
-
-# calculations for posterior q(x_{t-1} | x_t, x_0)
-posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
 
 def cosine_beta_schedule(timesteps, s=0.008):
     """
@@ -47,7 +33,6 @@ def cosine_beta_schedule(timesteps, s=0.008):
     alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
-
 
 
 def quadratic_beta_schedule(timesteps):
@@ -63,39 +48,83 @@ def sigmoid_beta_schedule(timesteps):
     return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
 
 
-
 def extract(a, t, x_shape):
     batch_size = t.shape[0]
     out = a.gather(-1, t.cpu())
     return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
 
 
-image_size = 128
-transform = Compose(
-    [
-        Resize(image_size),
-        CenterCrop(image_size),
-        ToTensor(),  # turn into torch Tensor of shape CHW, divide by 255
-        Lambda(lambda t: (t * 2) - 1),
-    ]
-)
+@dataclass
+class Scheduler:
+    sqrt_recip_alphas: float
+    posterior_variance: float
+    sqrt_one_minus_alphas_cumprod: float
+    sqrt_alphas_cumprod: float
+    timesteps: float
 
-reverse_transform = Compose(
-    [
-        Lambda(lambda t: (t + 1) / 2),
-        Lambda(lambda t: t.permute(1, 2, 0)),  # CHW to HWC
-        Lambda(lambda t: t * 255.0),
-        Lambda(lambda t: t.numpy().astype(np.uint8)),
-        ToPILImage(),
-    ]
-)
+
+def get_schedule(timesteps: int = 100, schedule_type="linear"):
+    # define beta schedule
+    if schedule_type == "linear":
+        betas = linear_beta_schedule(timesteps=timesteps)
+
+    # define alphas
+    alphas = 1.0 - betas
+    alphas_cumprod = torch.cumprod(alphas, axis=0)
+    alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+    sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
+
+    # calculations for diffusion q(x_t | x_{t-1}) and others
+    sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
+    sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
+
+    # calculations for posterior q(x_{t-1} | x_t, x_0)
+    posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+    return Scheduler(
+        sqrt_recip_alphas,
+        posterior_variance,
+        sqrt_one_minus_alphas_cumprod,
+        sqrt_alphas_cumprod,
+        timesteps
+    )
+
+
+def get_transforms(image_size: int = 128):
+    inference_transform = Compose(
+        [
+            Resize(image_size),
+            CenterCrop(image_size),
+            ToTensor(),  # turn into torch Tensor of shape CHW, divide by 255
+            Lambda(lambda t: (t * 2) - 1),
+        ]
+    )
+
+    reverse_transform = Compose(
+        [
+            Lambda(lambda t: (t + 1) / 2),
+            Lambda(lambda t: t.permute(1, 2, 0)),  # CHW to HWC
+            Lambda(lambda t: t * 255.0),
+            Lambda(lambda t: t.numpy().astype(np.uint8)),
+            ToPILImage(),
+        ]
+    )
+
+    # define image transformations (e.g. using torchvision)
+    ds_transform = Compose(
+        [
+            RandomHorizontalFlip(),
+            ToTensor(),
+            Lambda(lambda t: (t * 2) - 1),
+        ]
+    )
+    return inference_transform, reverse_transform, ds_transform
 
 
 @torch.no_grad()
-def p_sample(model, x, t, t_index):
-    betas_t = extract(betas, t, x.shape)
-    sqrt_one_minus_alphas_cumprod_t = extract(sqrt_one_minus_alphas_cumprod, t, x.shape)
-    sqrt_recip_alphas_t = extract(sqrt_recip_alphas, t, x.shape)
+def p_sample(model, scheduler: Scheduler, x, t, t_index):
+    betas_t = extract(scheduler.betas, t, x.shape)
+    sqrt_one_minus_alphas_cumprod_t = extract(scheduler.sqrt_one_minus_alphas_cumprod, t, x.shape)
+    sqrt_recip_alphas_t = extract(scheduler.sqrt_recip_alphas, t, x.shape)
 
     # Equation 11 in the paper
     # Use our model (noise predictor) to predict the mean
@@ -106,15 +135,16 @@ def p_sample(model, x, t, t_index):
     if t_index == 0:
         return model_mean
     else:
-        posterior_variance_t = extract(posterior_variance, t, x.shape)
+        posterior_variance_t = extract(scheduler.posterior_variance, t, x.shape)
         noise = torch.randn_like(x)
         # Algorithm 2 line 4:
         return model_mean + torch.sqrt(posterior_variance_t) * noise
 
 
 # Algorithm 2 (including returning all images)
+# Sample all timesteps in a loop - used for sampling at inference
 @torch.no_grad()
-def p_sample_loop(model, shape):
+def p_sample_loop(model, shape, timesteps: int):
     device = next(model.parameters()).device
 
     b = shape[0]
@@ -131,8 +161,10 @@ def p_sample_loop(model, shape):
         imgs.append(img.cpu())
     return imgs
 
-
-from pathlib import Path
+@torch.no_grad()
+def sample(model, image_size, batch_size=16, channels=3):
+    res = p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
+    return res[0]
 
 
 def num_to_groups(num, divisor):
@@ -144,22 +176,17 @@ def num_to_groups(num, divisor):
     return arr
 
 
-def q_sample(x_start, t, noise=None):
-
+def q_sample(scheduler: Scheduler, x_start, t, noise=None):
     if noise is None:
         noise = torch.randn_like(x_start)
 
-    sqrt_alphas_cumprod_t = extract(sqrt_alphas_cumprod, t, x_start.shape)
+    sqrt_alphas_cumprod_t = extract(scheduler.sqrt_alphas_cumprod, t, x_start.shape)
     sqrt_one_minus_alphas_cumprod_t = extract(
-        sqrt_one_minus_alphas_cumprod, t, x_start.shape
+        scheduler.sqrt_one_minus_alphas_cumprod, t, x_start.shape
     )
 
     return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
-@torch.no_grad()
-def sample(model, image_size, batch_size=16, channels=3):
-    res = p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
-    return res[0]
 
 
 def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1"):
