@@ -7,6 +7,8 @@ from train_utils import *
 from unet import *
 from torchvision.utils import save_image
 from torch.optim import Adam
+import os
+import shutil
 
 # load dataset from the hub
 dataset = load_dataset("fashion_mnist")
@@ -39,6 +41,7 @@ dataloader = DataLoader(
 
 
 results_folder = Path("./results")
+shutil.rmtree('./results')
 results_folder.mkdir(exist_ok=True)
 save_and_sample_every = 100
 
@@ -73,9 +76,10 @@ for epoch in range(epochs):
         batch = batch["pixel_values"].to(device)
 
         # Algorithm 1 line 3: sample t uniformally for every example in the batch
+        # set of timesteps that we are sampling
         t = torch.randint(0, scheduler.timesteps, (batch_size,), device=device).long()
 
-        loss = p_losses(model, batch, t, loss_type="huber")
+        loss = p_losses(model, scheduler, batch, t, loss_type="huber")
 
         if step % 20 == 0:
             print(f"Loss for step {step}:", loss.item())
@@ -90,7 +94,7 @@ for epoch in range(epochs):
             all_images_list = list(
                 map(
                     lambda n: sample(
-                        model, image_size=128, batch_size=n, channels=channels
+                        model, scheduler, image_size=128, batch_size=n, channels=channels
                     ),
                     batches,
                 )

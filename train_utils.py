@@ -10,7 +10,6 @@ from torchvision.transforms import (
     CenterCrop,
     Resize,
     RandomHorizontalFlip,
-    
 )
 import numpy as np
 from tqdm import tqdm
@@ -48,6 +47,7 @@ def sigmoid_beta_schedule(timesteps):
     return torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
 
 
+# extract data at t indices from a
 def extract(a, t, x_shape):
     batch_size = t.shape[0]
     out = a.gather(-1, t.cpu())
@@ -61,6 +61,7 @@ class Scheduler:
     sqrt_one_minus_alphas_cumprod: float
     sqrt_alphas_cumprod: float
     timesteps: float
+    betas: float
 
 
 def get_schedule(timesteps: int = 100, schedule_type="linear"):
@@ -70,8 +71,11 @@ def get_schedule(timesteps: int = 100, schedule_type="linear"):
 
     # define alphas
     alphas = 1.0 - betas
+    # cumulative product
     alphas_cumprod = torch.cumprod(alphas, axis=0)
+    # previous cumulative product
     alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
+    # 1-betas squared - for predicting normal distribution
     sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
 
     # calculations for diffusion q(x_t | x_{t-1}) and others
@@ -79,13 +83,15 @@ def get_schedule(timesteps: int = 100, schedule_type="linear"):
     sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
 
     # calculations for posterior q(x_{t-1} | x_t, x_0)
+    # variance between each step
     posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
     return Scheduler(
         sqrt_recip_alphas,
         posterior_variance,
         sqrt_one_minus_alphas_cumprod,
         sqrt_alphas_cumprod,
-        timesteps
+        timesteps,
+        betas
     )
 
 
@@ -123,7 +129,9 @@ def get_transforms(image_size: int = 128):
 @torch.no_grad()
 def p_sample(model, scheduler: Scheduler, x, t, t_index):
     betas_t = extract(scheduler.betas, t, x.shape)
-    sqrt_one_minus_alphas_cumprod_t = extract(scheduler.sqrt_one_minus_alphas_cumprod, t, x.shape)
+    sqrt_one_minus_alphas_cumprod_t = extract(
+        scheduler.sqrt_one_minus_alphas_cumprod, t, x.shape
+    )
     sqrt_recip_alphas_t = extract(scheduler.sqrt_recip_alphas, t, x.shape)
 
     # Equation 11 in the paper
@@ -144,7 +152,7 @@ def p_sample(model, scheduler: Scheduler, x, t, t_index):
 # Algorithm 2 (including returning all images)
 # Sample all timesteps in a loop - used for sampling at inference
 @torch.no_grad()
-def p_sample_loop(model, shape, timesteps: int):
+def p_sample_loop(model, scheduler: Scheduler, shape, timesteps: int):
     device = next(model.parameters()).device
 
     b = shape[0]
@@ -156,14 +164,24 @@ def p_sample_loop(model, shape, timesteps: int):
         reversed(range(0, timesteps)), desc="sampling loop time step", total=timesteps
     ):
         img = p_sample(
-            model, img, torch.full((b,), i, device=device, dtype=torch.long), i
+            model,
+            scheduler,
+            img,
+            torch.full((b,), i, device=device, dtype=torch.long),
+            i,
         )
         imgs.append(img.cpu())
     return imgs
 
+
 @torch.no_grad()
-def sample(model, image_size, batch_size=16, channels=3):
-    res = p_sample_loop(model, shape=(batch_size, channels, image_size, image_size))
+def sample(model, scheduler: Scheduler, image_size, batch_size=16, channels=3):
+    res = p_sample_loop(
+        model,
+        scheduler,
+        (batch_size, channels, image_size, image_size),
+        scheduler.timesteps,
+    )
     return res[0]
 
 
@@ -188,12 +206,13 @@ def q_sample(scheduler: Scheduler, x_start, t, noise=None):
     return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
 
-
-def p_losses(denoise_model, x_start, t, noise=None, loss_type="l1"):
+def p_losses(
+    denoise_model, scheduler: Scheduler, x_start, t, noise=None, loss_type="l1"
+):
     if noise is None:
         noise = torch.randn_like(x_start)
 
-    x_noisy = q_sample(x_start=x_start, t=t, noise=noise)
+    x_noisy = q_sample(scheduler, x_start, t, noise)
     predicted_noise = denoise_model(x_noisy, t)
 
     if loss_type == "l1":
