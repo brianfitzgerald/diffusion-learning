@@ -169,7 +169,7 @@ def p_sample_loop(model, scheduler: Scheduler, shape, timesteps: int):
 
 
 @torch.no_grad()
-def sample(model, scheduler: Scheduler, image_size, batch_size=16, channels=3):
+def s(model, scheduler: Scheduler, image_size, batch_size=16, channels=3):
     res = p_sample_loop(
         model,
         scheduler,
