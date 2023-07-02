@@ -20,8 +20,8 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 # load dataset from the hub
 dataset = load_dataset("huggan/smithsonian_butterflies_subset", split="train")
 image_size = 32
-channels = 1
-batch_size = 64
+channels = 3
+batch_size = 128
 from PIL import Image
 
 
@@ -73,25 +73,12 @@ save_and_sample_every = 200
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(device)
 
-model = UNet2DModel(
-    sample_size=image_size,  # the target image resolution
-    in_channels=3,  # the number of input channels, 3 for RGB images
-    out_channels=3,  # the number of output channels
-    layers_per_block=2,  # how many ResNet layers to use per UNet block
-    block_out_channels=(64, 128, 128, 256),  # More channels -> more parameters
-    down_block_types=(
-        "DownBlock2D",  # a regular ResNet downsampling block
-        "DownBlock2D",
-        "AttnDownBlock2D",  # a ResNet downsampling block with spatial self-attention
-        "AttnDownBlock2D",
-    ),
-    up_block_types=(
-        "AttnUpBlock2D",
-        "AttnUpBlock2D",  # a ResNet upsampling block with spatial self-attention
-        "UpBlock2D",
-        "UpBlock2D",  # a regular ResNet upsampling block
-    ),
+model = Unet(
+    dim=image_size,
+    channels=channels,
+    dim_mults=(1, 2, 4,)
 )
+
 model = model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
@@ -100,9 +87,11 @@ noise_scheduler = DDPMScheduler(
     num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2"
 )
 
-epochs = 30
+epochs = 300
 
 losses = []
+
+sample_every = 5
 
 for epoch in range(epochs):
     for step, batch in enumerate(train_dataloader):
@@ -120,12 +109,13 @@ for epoch in range(epochs):
         noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
 
         # Get the model prediction
-        noise_pred = model(noisy_images, timesteps, return_dict=False)[0]
+        noise_pred = model(noisy_images, timesteps)
 
         # Calculate the loss
         loss = F.mse_loss(noise_pred, noise)
         loss.backward(loss)
         losses.append(loss.item())
+        print(f'loss: {loss.item()}')
 
         # Update the model parameters with the optimizer
         optimizer.step()
@@ -134,17 +124,21 @@ for epoch in range(epochs):
     loss_last_epoch = sum(losses[-len(train_dataloader) :]) / len(train_dataloader)
     print(f"Epoch:{epoch+1}, loss: {loss_last_epoch}")
 
-    # save generated images
-    # Random starting point (8 random images):
-    s = torch.randn(8, 3, 32, 32).to(device)
 
-    for i, t in enumerate(noise_scheduler.timesteps):
-        # Get model pred
-        with torch.no_grad():
-            residual = model(s, t).sample
+    if epoch % sample_every == 0:
+        gen_batch_size = 8
+        # save generated images
+        # Random starting point (8 random images):
+        s = torch.randn(gen_batch_size, 3, 32, 32).to(device)
+        for i, t in enumerate(noise_scheduler.timesteps):
+            # Get model pred
+            with torch.no_grad():
+                t = t.repeat(gen_batch_size).to(device)
+                residual = model(s, t)
 
-        # Update sample with step
-        s = noise_scheduler.step(residual, t, s).prev_sample
+            # Update sample with step
+            t = t[0].item()
+            s = noise_scheduler.step(residual, t, s).prev_sample
 
-    img = sample_to_pil(s)
-    img.save(f"results/epoch_{epoch}.png")
+        img = sample_to_pil(s)
+        img.save(f"results/epoch_{epoch}.png")
