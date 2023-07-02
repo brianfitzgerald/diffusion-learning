@@ -14,15 +14,15 @@ from diffusers import DDPMScheduler, UNet2DModel
 from torchvision import transforms
 import torchvision
 
+from PIL import Image
 
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 # load dataset from the hub
-dataset = load_dataset("fashion_mnist", split="train+test")
-image_size = 28
-num_channels = 1
-batch_size = 256
-from PIL import Image
+dataset = load_dataset("nielsr/CelebA-faces", split="train")
+image_size = 128
+num_channels = 3
+batch_size = 32
 
 
 def sample_to_pil(x):
@@ -39,6 +39,7 @@ torch.manual_seed(0)
 inference_transform, reverse_transform, dataset_transform = get_transforms(image_size)
 preprocess = transforms.Compose(
     [
+        transforms.CenterCrop(size=image_size),
         transforms.Resize((image_size, image_size)),  # Resize
         transforms.RandomHorizontalFlip(),  # Randomly flip (data augmentation)
         transforms.ToTensor(),  # Convert to tensor (0, 1)
@@ -96,10 +97,10 @@ epochs = 600
 
 losses = []
 
-sample_every = 1
+sample_every = 50
 
 for epoch in range(epochs):
-    num_batches = len(train_dataloader) / batch_size
+    num_batches = len(train_dataloader)
     for i, batch in enumerate(train_dataloader):
         clean_images = batch["images"].to(device)
         # Sample noise to add to the images
@@ -133,23 +134,24 @@ for epoch in range(epochs):
         optimizer.step()
         optimizer.zero_grad()
 
+        if i % sample_every == 0:
+            print("Sampling...")
+            gen_batch_size = 8
+            # save generated images
+            # Random starting point (8 random images):
+            s = torch.randn(gen_batch_size, num_channels, 32, 32).to(device)
+            for j, t in enumerate(noise_scheduler.timesteps):
+                # Get model pred
+                with torch.no_grad():
+                    t = t.repeat(gen_batch_size).to(device)
+                    residual = model(s, t)
+
+                # Update sample with step
+                t = t[0].item()
+                s = noise_scheduler.step(residual, t, s).prev_sample
+
+            img = sample_to_pil(s)
+            img.save(f"results/epoch_{epoch}_batch_{i}.png")
+
     loss_last_epoch = sum(losses[-len(train_dataloader) :]) / len(train_dataloader)
     print(f"Epoch:{epoch+1}, loss: {loss_last_epoch}")
-
-    if epoch % sample_every == 0:
-        gen_batch_size = 8
-        # save generated images
-        # Random starting point (8 random images):
-        s = torch.randn(gen_batch_size, num_channels, 32, 32).to(device)
-        for i, t in enumerate(noise_scheduler.timesteps):
-            # Get model pred
-            with torch.no_grad():
-                t = t.repeat(gen_batch_size).to(device)
-                residual = model(s, t)
-
-            # Update sample with step
-            t = t[0].item()
-            s = noise_scheduler.step(residual, t, s).prev_sample
-
-        img = sample_to_pil(s)
-        img.save(f"results/epoch_{epoch}.png")
