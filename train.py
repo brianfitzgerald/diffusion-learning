@@ -72,7 +72,7 @@ optimizer = Adam(model.parameters(), lr=1e-3)
 
 scheduler = get_scheduler(200)
 
-epochs = 50
+epochs = 100
 
 for epoch in range(epochs):
     print(f"Epoch {epoch}:")

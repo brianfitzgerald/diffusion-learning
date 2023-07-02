@@ -10,6 +10,7 @@ from torchvision.transforms import (
     CenterCrop,
     Resize,
     RandomHorizontalFlip,
+    Normalize
 )
 import numpy as np
 from tqdm import tqdm
@@ -113,7 +114,7 @@ def get_transforms(image_size: int = 128):
         [
             RandomHorizontalFlip(),
             ToTensor(),
-            Lambda(lambda t: (t * 2) - 1),
+            Normalize([0.5], [0.5])
         ]
     )
     return inference_transform, reverse_transform, dataset_transform
