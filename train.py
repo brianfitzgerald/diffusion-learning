@@ -18,10 +18,10 @@ import torchvision
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 # load dataset from the hub
-dataset = load_dataset("huggan/smithsonian_butterflies_subset", split="train")
-image_size = 32
-channels = 3
-batch_size = 128
+dataset = load_dataset("fashion_mnist", split="train+test")
+image_size = 28
+num_channels = 1
+batch_size = 256
 from PIL import Image
 
 
@@ -48,7 +48,8 @@ preprocess = transforms.Compose(
 
 
 def transform(examples):
-    images = [preprocess(image.convert("RGB")) for image in examples["image"]]
+    mode = "RGB" if num_channels == 3 else "L"
+    images = [preprocess(image.convert(mode)) for image in examples["image"]]
     return {"images": images}
 
 
@@ -75,8 +76,12 @@ print(device)
 
 model = Unet(
     dim=image_size,
-    channels=channels,
-    dim_mults=(1, 2, 4,)
+    channels=num_channels,
+    dim_mults=(
+        1,
+        2,
+        4,
+    ),
 )
 
 model = model.to(device)
@@ -84,17 +89,18 @@ model = model.to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
 
 noise_scheduler = DDPMScheduler(
-    num_train_timesteps=1000, beta_schedule="squaredcos_cap_v2"
+    num_train_timesteps=100, beta_schedule="squaredcos_cap_v2"
 )
 
-epochs = 300
+epochs = 600
 
 losses = []
 
-sample_every = 5
+sample_every = 1
 
 for epoch in range(epochs):
-    for step, batch in enumerate(train_dataloader):
+    num_batches = len(train_dataloader) / batch_size
+    for i, batch in enumerate(train_dataloader):
         clean_images = batch["images"].to(device)
         # Sample noise to add to the images
         noise = torch.randn(clean_images.shape).to(clean_images.device)
@@ -102,11 +108,17 @@ for epoch in range(epochs):
 
         # Sample a random timestep for each image
         timesteps = torch.randint(
-            0, noise_scheduler.num_train_timesteps, (bs,), device=clean_images.device
+            0,
+            noise_scheduler.num_train_timesteps,
+            (bs,),
+            device=clean_images.device,
         ).long()
 
         # Add noise to the clean images according to the noise magnitude at each timestep
         noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
+        # for i in range(len(noisy_images)):
+        #     to_pil(noisy_images[i]).save(f'results/test_{i}_ts_{timesteps[i]}_noisy.png')
+        #     to_pil(clean_images[i]).save(f'results/test_{i}_ts_{timesteps[i]}_clean.png')
 
         # Get the model prediction
         noise_pred = model(noisy_images, timesteps)
@@ -115,7 +127,7 @@ for epoch in range(epochs):
         loss = F.mse_loss(noise_pred, noise)
         loss.backward(loss)
         losses.append(loss.item())
-        print(f'loss: {loss.item()}')
+        print(f"loss for batch {i} / {num_batches}: {loss.item()}")
 
         # Update the model parameters with the optimizer
         optimizer.step()
@@ -124,12 +136,11 @@ for epoch in range(epochs):
     loss_last_epoch = sum(losses[-len(train_dataloader) :]) / len(train_dataloader)
     print(f"Epoch:{epoch+1}, loss: {loss_last_epoch}")
 
-
     if epoch % sample_every == 0:
         gen_batch_size = 8
         # save generated images
         # Random starting point (8 random images):
-        s = torch.randn(gen_batch_size, 3, 32, 32).to(device)
+        s = torch.randn(gen_batch_size, num_channels, 32, 32).to(device)
         for i, t in enumerate(noise_scheduler.timesteps):
             # Get model pred
             with torch.no_grad():
