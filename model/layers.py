@@ -88,7 +88,7 @@ class SinusoidalPositionEmbeddings(nn.Module):
 class WeightStandardizedConv2d(nn.Conv2d):
     """
     https://arxiv.org/abs/1903.10520
-    weight standardization purportedly works synergistically with group normalization
+    Weight standardization is a simple reparameterization of the weights
     """
 
     def forward(self, x):
@@ -145,6 +145,8 @@ class ResnetBlock(nn.Module):
 
         self.block1 = Block(in_channels, out_channels, groups=groups)
         self.block2 = Block(out_channels, out_channels, groups=groups)
+        #  Take the time embedding, rearrange, then perform standardization on first layer,
+        # then second layer + add residual
         self.res_conv = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
         self.dropout = torch.nn.Dropout(dropout)
 
@@ -153,12 +155,15 @@ class ResnetBlock(nn.Module):
 
         if exists(self.mlp) and exists(time_emb):
             time_emb = self.mlp(time_emb)
+            # unsqueeze twice
             h = rearrange(time_emb, "b c -> b c 1 1") + h
 
         h = self.block2(h)
         h = self.dropout(h)
         return h + self.res_conv(x)
 
+# Alternative to convnets and vision transformers
+# apply the same params and window size, but with convs instead of attention
 class ConvNextBlock(nn.Module):
     """https://arxiv.org/abs/2201.03545"""
 

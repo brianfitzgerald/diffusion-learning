@@ -12,34 +12,26 @@ import shutil
 import torchvision.transforms as T
 from diffusers import DDPMScheduler, UNet2DModel
 from torchvision import transforms
-import torchvision
 
-from PIL import Image
 
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 # load dataset from the hub
 dataset = load_dataset("nielsr/CelebA-faces", split="train")
-image_size = 128
+image_size = 48
 num_channels = 3
-batch_size = 32
-
-
-def sample_to_pil(x):
-    """Given a batch of images x, make a grid and convert to PIL"""
-    x = x * 0.5 + 0.5  # Map from (-1, 1) back to (0, 1)
-    grid = torchvision.utils.make_grid(x)
-    grid_im = grid.detach().cpu().permute(1, 2, 0).clip(0, 1) * 255
-    grid_im = Image.fromarray(np.array(grid_im).astype(np.uint8))
-    return grid_im
+batch_size = 128
+epochs = 600
+sample_every = 200
+save_every = 1000
+clip_value = 1
 
 
 torch.manual_seed(0)
 
-inference_transform, reverse_transform, dataset_transform = get_transforms(image_size)
 preprocess = transforms.Compose(
     [
-        transforms.CenterCrop(size=image_size),
+        transforms.CenterCrop(size=128),
         transforms.Resize((image_size, image_size)),  # Resize
         transforms.RandomHorizontalFlip(),  # Randomly flip (data augmentation)
         transforms.ToTensor(),  # Convert to tensor (0, 1)
@@ -69,7 +61,6 @@ train_dataloader = torch.utils.data.DataLoader(
 results_folder = Path("./results")
 shutil.rmtree("./results")
 results_folder.mkdir(exist_ok=True)
-save_and_sample_every = 200
 
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -82,22 +73,31 @@ model = Unet(
         1,
         2,
         4,
+        8,
     ),
 )
 
 model = model.to(device)
 
+
+def init_weights(m):
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform(m.weight)
+        m.bias.data.fill_(0.01)
+
+
+model.apply(init_weights)
+
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=4e-4)
 
 noise_scheduler = DDPMScheduler(
-    num_train_timesteps=100, beta_schedule="squaredcos_cap_v2"
+    num_train_timesteps=500, beta_schedule="squaredcos_cap_v2"
 )
 
-epochs = 600
 
 losses = []
 
-sample_every = 50
 
 for epoch in range(epochs):
     num_batches = len(train_dataloader)
@@ -118,8 +118,12 @@ for epoch in range(epochs):
         # Add noise to the clean images according to the noise magnitude at each timestep
         noisy_images = noise_scheduler.add_noise(clean_images, noise, timesteps)
         # for i in range(len(noisy_images)):
-        #     to_pil(noisy_images[i]).save(f'results/test_{i}_ts_{timesteps[i]}_noisy.png')
-        #     to_pil(clean_images[i]).save(f'results/test_{i}_ts_{timesteps[i]}_clean.png')
+        #     to_pil(noisy_images[i]).save(
+        #         f"results/test_{i}_ts_{timesteps[i]}_noisy.png"
+        #     )
+        #     to_pil(clean_images[i]).save(
+        #         f"results/test_{i}_ts_{timesteps[i]}_clean.png"
+        #     )
 
         # Get the model prediction
         noise_pred = model(noisy_images, timesteps)
@@ -127,6 +131,7 @@ for epoch in range(epochs):
         # Calculate the loss
         loss = F.mse_loss(noise_pred, noise)
         loss.backward(loss)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
         losses.append(loss.item())
         print(f"loss for batch {i} / {num_batches}: {loss.item()}")
 
@@ -139,7 +144,7 @@ for epoch in range(epochs):
             gen_batch_size = 8
             # save generated images
             # Random starting point (8 random images):
-            s = torch.randn(gen_batch_size, num_channels, 32, 32).to(device)
+            s = torch.randn(gen_batch_size, num_channels, image_size, image_size).to(device)
             for j, t in enumerate(noise_scheduler.timesteps):
                 # Get model pred
                 with torch.no_grad():

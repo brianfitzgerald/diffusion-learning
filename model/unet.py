@@ -15,7 +15,7 @@ import torch
 from torch import nn, einsum
 import torch.nn.functional as F
 
-from layers import *
+from model.layers import *
 
 
 class Unet(nn.Module):
@@ -39,13 +39,14 @@ class Unet(nn.Module):
         init_dim = default(init_dim, dim // 3 * 2)
         self.init_conv = nn.Conv2d(channels, init_dim, 7, padding=3)
 
+        # dim_mults is the size of the expanding / contracting block
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
         if use_convnext:
-            block_klass = partial(ConvNextBlock, mult=convnext_mult)
+            block_class = partial(ConvNextBlock, mult=convnext_mult)
         else:
-            block_klass = partial(ResnetBlock, groups=resnet_block_groups)
+            block_class = partial(ResnetBlock, groups=resnet_block_groups)
 
         # time embeddings
         if with_time_emb:
@@ -71,8 +72,8 @@ class Unet(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        block_klass(dim_in, dim_out, time_emb_dim=time_dim),
-                        block_klass(dim_out, dim_out, time_emb_dim=time_dim),
+                        block_class(dim_in, dim_out, time_emb_dim=time_dim),
+                        block_class(dim_out, dim_out, time_emb_dim=time_dim),
                         Residual(PreNorm(dim_out, LinearAttention(dim_out))),
                         Downsample(dim_out) if not is_last else nn.Identity(),
                     ]
@@ -80,9 +81,9 @@ class Unet(nn.Module):
             )
 
         mid_dim = dims[-1]
-        self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block1 = block_class(mid_dim, mid_dim, time_emb_dim=time_dim)
         self.mid_attn = Residual(PreNorm(mid_dim, Attention(mid_dim)))
-        self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block2 = block_class(mid_dim, mid_dim, time_emb_dim=time_dim)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (num_resolutions - 1)
@@ -90,8 +91,8 @@ class Unet(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        block_klass(dim_out * 2, dim_in, time_emb_dim=time_dim),
-                        block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+                        block_class(dim_out * 2, dim_in, time_emb_dim=time_dim),
+                        block_class(dim_in, dim_in, time_emb_dim=time_dim),
                         Residual(PreNorm(dim_in, LinearAttention(dim_in))),
                         Upsample(dim_in) if not is_last else nn.Identity(),
                     ]
@@ -100,7 +101,7 @@ class Unet(nn.Module):
 
         out_dim = default(out_dim, channels)
         self.final_conv = nn.Sequential(
-            block_klass(dim, dim), nn.Conv2d(dim, out_dim, 1)
+            block_class(dim, dim), nn.Conv2d(dim, out_dim, 1)
         )
 
     def forward(self, x, time):
