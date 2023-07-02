@@ -2,9 +2,9 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset
 from pathlib import Path
 import torch
-from layers import num_to_groups
+from model.layers import num_to_groups
 from train_utils import *
-from unet import *
+from model.unet import *
 from torchvision.utils import save_image
 from torch.optim import Adam
 import os

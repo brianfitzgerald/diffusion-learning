@@ -135,17 +135,18 @@ class Block(nn.Module):
 class ResnetBlock(nn.Module):
     """https://arxiv.org/abs/1512.03385"""
 
-    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
+    def __init__(self, in_channels, out_channels, dropout, temb_channels=None, groups=8):
         super().__init__()
         self.mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
-            if exists(time_emb_dim)
+            nn.Sequential(nn.SiLU(), nn.Linear(temb_channels, out_channels))
+            if exists(temb_channels)
             else None
         )
 
-        self.block1 = Block(dim, dim_out, groups=groups)
-        self.block2 = Block(dim_out, dim_out, groups=groups)
-        self.res_conv = nn.Conv2d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
+        self.block1 = Block(in_channels, out_channels, groups=groups)
+        self.block2 = Block(out_channels, out_channels, groups=groups)
+        self.res_conv = nn.Conv2d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
+        self.dropout = torch.nn.Dropout(dropout)
 
     def forward(self, x, time_emb=None):
         h = self.block1(x)
@@ -155,6 +156,7 @@ class ResnetBlock(nn.Module):
             h = rearrange(time_emb, "b c -> b c 1 1") + h
 
         h = self.block2(h)
+        h = self.dropout(h)
         return h + self.res_conv(x)
 
 class ConvNextBlock(nn.Module):
