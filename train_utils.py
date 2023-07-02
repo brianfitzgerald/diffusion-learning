@@ -16,12 +16,6 @@ from tqdm import tqdm
 from dataclasses import dataclass
 
 
-def linear_beta_schedule(timesteps):
-    beta_start = 0.0001
-    beta_end = 0.02
-    return torch.linspace(beta_start, beta_end, timesteps)
-
-
 def cosine_beta_schedule(timesteps, s=0.008):
     """
     cosine schedule as proposed in https://arxiv.org/abs/2102.09672
@@ -33,12 +27,15 @@ def cosine_beta_schedule(timesteps, s=0.008):
     betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
     return torch.clip(betas, 0.0001, 0.9999)
 
+def linear_beta_schedule(timesteps):
+    beta_start = 0.0001
+    beta_end = 0.02
+    return torch.linspace(beta_start, beta_end, timesteps)
 
 def quadratic_beta_schedule(timesteps):
     beta_start = 0.0001
     beta_end = 0.02
     return torch.linspace(beta_start**0.5, beta_end**0.5, timesteps) ** 2
-
 
 def sigmoid_beta_schedule(timesteps):
     beta_start = 0.0001
@@ -64,27 +61,23 @@ class Scheduler:
     betas: float
 
 
-def get_schedule(timesteps: int = 100, schedule_type="linear"):
+def get_scheduler(timesteps: int = 100):
     # define beta schedule
-    if schedule_type == "linear":
-        betas = linear_beta_schedule(timesteps=timesteps)
+    # define beta schedule
+    betas = linear_beta_schedule(timesteps)
 
     # define alphas
-    alphas = 1.0 - betas
-    # cumulative product
+    alphas = 1. - betas
     alphas_cumprod = torch.cumprod(alphas, axis=0)
-    # previous cumulative product
     alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
-    # 1-betas squared - for predicting normal distribution
     sqrt_recip_alphas = torch.sqrt(1.0 / alphas)
 
     # calculations for diffusion q(x_t | x_{t-1}) and others
     sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod)
-    sqrt_one_minus_alphas_cumprod = torch.sqrt(1.0 - alphas_cumprod)
+    sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod)
 
     # calculations for posterior q(x_{t-1} | x_t, x_0)
-    # variance between each step
-    posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+    posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
     return Scheduler(
         sqrt_recip_alphas,
         posterior_variance,
@@ -116,14 +109,14 @@ def get_transforms(image_size: int = 128):
     )
 
     # define image transformations (e.g. using torchvision)
-    ds_transform = Compose(
+    dataset_transform = Compose(
         [
             RandomHorizontalFlip(),
             ToTensor(),
             Lambda(lambda t: (t * 2) - 1),
         ]
     )
-    return inference_transform, reverse_transform, ds_transform
+    return inference_transform, reverse_transform, dataset_transform
 
 
 @torch.no_grad()
